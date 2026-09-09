@@ -453,7 +453,11 @@ function cb_decrypt_blob($blob) {
  *           (same package password, decryptable with openssl on any machine)
  *   plain - additionally the raw config.xml (WARNING: plaintext secrets)
  *   both  - enc + plain
- * Failures are logged, never fatal. */
+ * Every push is verified (remote file size must match); on mismatch the
+ * push is retried once and the broken remote file is removed on final
+ * failure. After a successful push run, files beyond the retention setting
+ * are pruned from the target directory (our naming pattern only). Failures
+ * are logged, never fatal. */
 function cb_offbox_push($row, $plain = null) {
 	if (cb_cfg('backend') !== 'offbox') {
 		return;
@@ -461,6 +465,11 @@ function cb_offbox_push($row, $plain = null) {
 	$target = trim((string)cb_cfg('offbox_target'));
 	if ($target === '' || strpos($target, ':') === false) {
 		log_error('configbackup: offbox backend selected but offbox_target is missing or invalid');
+		return;
+	}
+	list($userhost, $rpath) = cb_offbox_split_target($target);
+	if ($userhost === '' || $rpath === '') {
+		log_error('configbackup: offbox_target invalid: ' . $target);
 		return;
 	}
 	$mode = cb_cfg('offbox_mode', 'scp');
@@ -488,21 +497,55 @@ function cb_offbox_push($row, $plain = null) {
 			continue;
 		}
 		@chmod($tmp, 0600);
-		if ($mode === 'rsync' && is_executable('/usr/local/bin/rsync')) {
-			$cmd = '/usr/local/bin/rsync -a --chmod=F600 ' . escapeshellarg($tmp) . ' ' .
-				escapeshellarg(rtrim($target, '/') . '/');
-		} else {
-			/* BatchMode: fail instead of hanging on a missing ssh key.
-			 * -p keeps the staged 0600 mode on the remote copy. */
-			$cmd = '/usr/bin/scp -p -q -o BatchMode=yes ' . escapeshellarg($tmp) . ' ' .
-				escapeshellarg(rtrim($target, '/') . '/' . $name);
+		$size = strlen($content);
+		if ($size === 0) {
+			/* Never push empty content - the verify below would compare
+			 * 0 == 0 and mask a broken source. */
+			@unlink($tmp);
+			$failures[] = $name . ' (empty content, not pushed)';
+			continue;
 		}
-		exec($cmd . ' 2>&1', $out, $rc);
+		$done = false;
+		$rsize = null;
+		/* Two attempts: the target mount may be flipped by other backup
+		 * software mid-transfer (scp can then exit 0 with a truncated or
+		 * empty remote file), so verify the remote size, then re-verify
+		 * after a settle delay - the flip can zero a file seconds after a
+		 * completed transfer. */
+		for ($attempt = 0; $attempt < 2 && !$done; $attempt++) {
+			if ($attempt > 0) {
+				sleep(3);
+			}
+			if ($mode === 'rsync' && is_executable('/usr/local/bin/rsync')) {
+				$cmd = '/usr/local/bin/rsync -a --chmod=F600 ' . escapeshellarg($tmp) . ' ' .
+					escapeshellarg($target . '/');
+			} else {
+				$cmd = '/usr/bin/scp -p -q -o BatchMode=yes -o ConnectTimeout=10 ' .
+					escapeshellarg($tmp) . ' ' .
+					escapeshellarg($userhost . ':' . $rpath . '/' . $name);
+			}
+			exec($cmd . ' 2>&1', $out, $rc);
+			unset($out);
+			if ($rc != 0) {
+				continue;
+			}
+			$rsize = cb_offbox_remote_size($userhost, $rpath . '/' . $name);
+			if ($rsize !== null && $rsize === $size) {
+				sleep(2);
+				$rsize = cb_offbox_remote_size($userhost, $rpath . '/' . $name);
+				if ($rsize !== null && $rsize === $size) {
+					$done = true;
+				}
+			}
+		}
 		@unlink($tmp);
-		if ($rc != 0) {
-			$failures[] = $name . ': ' . implode(' ', (array)$out);
-		} else {
+		if ($done) {
 			$ok[] = $name;
+		} else {
+			$failures[] = $name . ' (expected ' . $size . ' bytes, got ' .
+				var_export($rsize, true) . ')';
+			/* A truncated remote file is worse than none. */
+			cb_offbox_remote_delete($userhost, $rpath . '/' . $name);
 		}
 	}
 	if ($failures) {
@@ -510,6 +553,70 @@ function cb_offbox_push($row, $plain = null) {
 	}
 	if ($ok) {
 		log_error('configbackup: offbox copy ok (' . implode(', ', $ok) . ')');
+	}
+
+	$retention = (int)cb_cfg('retention', CB_RETENTION_DEFAULT);
+	if ($retention >= 1) {
+		cb_offbox_prune($userhost, $rpath, $retention);
+	}
+}
+
+/* Split "user@host:/path" (first colon; the path part never needs one). */
+function cb_offbox_split_target($target) {
+	$pos = strpos($target, ':');
+	return array(substr($target, 0, $pos), rtrim(substr($target, $pos + 1), '/'));
+}
+
+/* Run a command on the off-box host. Returns array(rc, output-lines). */
+function cb_offbox_ssh($userhost, $remotecmd) {
+	$out = array();
+	$rc = 1;
+	exec('/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=5 ' .
+		escapeshellarg($userhost) . ' ' . escapeshellarg($remotecmd) . ' 2>&1', $out, $rc);
+	return array($rc, $out);
+}
+
+function cb_offbox_remote_size($userhost, $path) {
+	list($rc, $out) = cb_offbox_ssh($userhost,
+		'wc -c < ' . escapeshellarg($path));
+	if ($rc != 0 || empty($out)) {
+		return null;
+	}
+	$v = trim((string)$out[0]);
+	return ctype_digit($v) ? (int)$v : null;
+}
+
+function cb_offbox_remote_delete($userhost, $path) {
+	cb_offbox_ssh($userhost, 'rm -f ' . escapeshellarg($path));
+}
+
+/* Keep only the newest $retention backup groups (by our file-id) in the
+ * target directory. Only touches files matching our exact naming pattern. */
+function cb_offbox_prune($userhost, $rpath, $retention) {
+	list($rc, $out) = cb_offbox_ssh($userhost, 'ls -1 ' . escapeshellarg($rpath));
+	if ($rc != 0) {
+		return;
+	}
+	$groups = array();
+	foreach ($out as $line) {
+		if (preg_match('/^configbackup-\d{8}-\d{6}-[a-z]+-(\d+)\.(cbk|xml|xml\.enc)$/', trim($line), $m)) {
+			$groups[(int)$m[1]][] = trim($line);
+		}
+	}
+	if (count($groups) <= $retention) {
+		return;
+	}
+	krsort($groups);
+	$dead_ids = array_slice(array_keys($groups), $retention);
+	$n = 0;
+	foreach ($dead_ids as $id) {
+		foreach ($groups[$id] as $f) {
+			cb_offbox_remote_delete($userhost, $rpath . '/' . $f);
+			$n++;
+		}
+	}
+	if ($n > 0) {
+		log_error('configbackup: offbox pruned ' . $n . ' old file(s)');
 	}
 }
 
@@ -675,9 +782,10 @@ function cb_backup_native_locked($reason = '', $force = false) {
 		}
 	}
 	$ts = time();
+	$blob = cb_encrypt_store($plain);
 	$id = $store->insert($ts, 'native',
 		($reason !== '') ? $reason : 'Scheduled config backup',
-		(string)g_get('product_version'), strlen($plain), $sha, cb_encrypt_store($plain));
+		(string)g_get('product_version'), strlen($plain), $sha, $blob);
 	if (!$id) {
 		return array(0, 'Failed to store backup row');
 	}
