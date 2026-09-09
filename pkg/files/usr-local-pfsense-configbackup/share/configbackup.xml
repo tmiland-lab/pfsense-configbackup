@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<packagegui>
+	<name>configbackup</name>
+	<version>0.1.0</version>
+	<title>Config Backup</title>
+	<menu>
+		<name>Config Backup</name>
+		<tooltiptext>Local configuration backup and restore</tooltiptext>
+		<section>Diagnostics</section>
+		<url>/packages/configbackup/index.php</url>
+	</menu>
+</packagegui>
