@@ -446,8 +446,15 @@ function cb_decrypt_blob($blob) {
 
 /* Push one stored backup to the off-box target. Requires passwordless
  * (key-based) ssh to the target - an admin-provided "user@host:/path"
- * string. Failures are logged, never fatal. */
-function cb_offbox_push($row) {
+ * string. $plain (plaintext config.xml, when the caller has it) enables the
+ * optional XML copies selected by the offbox_xml setting:
+ *   none  - only the encrypted .cbk blob
+ *   enc   - additionally the XML in the standard encrypted tagfile format
+ *           (same package password, decryptable with openssl on any machine)
+ *   plain - additionally the raw config.xml (WARNING: plaintext secrets)
+ *   both  - enc + plain
+ * Failures are logged, never fatal. */
+function cb_offbox_push($row, $plain = null) {
 	if (cb_cfg('backend') !== 'offbox') {
 		return;
 	}
@@ -458,29 +465,51 @@ function cb_offbox_push($row) {
 	}
 	$mode = cb_cfg('offbox_mode', 'scp');
 	$safe_engine = preg_replace('/[^a-z]/', '', (string)$row['engine']);
-	$name = 'configbackup-' . date('Ymd-His', (int)$row['ts']) . '-' . $safe_engine .
-		'-' . (int)$row['id'] . '.cbk';
-	$tmp = g_get('tmp_path') . '/' . $name;
-	if (@file_put_contents($tmp, (string)$row['data']) === false) {
-		log_error('configbackup: cannot write offbox staging file ' . $tmp);
-		return;
+	$base = 'configbackup-' . date('Ymd-His', (int)$row['ts']) . '-' . $safe_engine .
+		'-' . (int)$row['id'];
+
+	$files = array($base . '.cbk' => (string)$row['data']);
+	$xmlmode = cb_cfg('offbox_xml', 'none');
+	if ($plain !== null && ($xmlmode === 'enc' || $xmlmode === 'both')) {
+		$enc = encrypt_data($plain, cb_natpw());
+		tagfile_reformat($enc, $enc, 'config.xml');
+		$files[$base . '.xml.enc'] = $enc;
 	}
-	@chmod($tmp, 0600);
-	if ($mode === 'rsync' && is_executable('/usr/local/bin/rsync')) {
-		$cmd = '/usr/local/bin/rsync -a --chmod=F600 ' . escapeshellarg($tmp) . ' ' .
-			escapeshellarg(rtrim($target, '/') . '/');
-	} else {
-		/* BatchMode: fail instead of hanging on a missing ssh key.
-		 * -p keeps the staged 0600 mode on the remote copy. */
-		$cmd = '/usr/bin/scp -p -q -o BatchMode=yes ' . escapeshellarg($tmp) . ' ' .
-			escapeshellarg(rtrim($target, '/') . '/' . $name);
+	if ($plain !== null && ($xmlmode === 'plain' || $xmlmode === 'both')) {
+		$files[$base . '.xml'] = $plain;
 	}
-	exec($cmd . ' 2>&1', $out, $rc);
-	@unlink($tmp);
-	if ($rc != 0) {
-		log_error('configbackup: offbox copy FAILED (' . $name . '): ' . implode(' ', (array)$out));
-	} else {
-		log_error('configbackup: offbox copy ok (' . $name . ')');
+
+	$failures = array();
+	$ok = array();
+	foreach ($files as $name => $content) {
+		$tmp = g_get('tmp_path') . '/' . $name;
+		if (@file_put_contents($tmp, $content) === false) {
+			log_error('configbackup: cannot write offbox staging file ' . $tmp);
+			continue;
+		}
+		@chmod($tmp, 0600);
+		if ($mode === 'rsync' && is_executable('/usr/local/bin/rsync')) {
+			$cmd = '/usr/local/bin/rsync -a --chmod=F600 ' . escapeshellarg($tmp) . ' ' .
+				escapeshellarg(rtrim($target, '/') . '/');
+		} else {
+			/* BatchMode: fail instead of hanging on a missing ssh key.
+			 * -p keeps the staged 0600 mode on the remote copy. */
+			$cmd = '/usr/bin/scp -p -q -o BatchMode=yes ' . escapeshellarg($tmp) . ' ' .
+				escapeshellarg(rtrim($target, '/') . '/' . $name);
+		}
+		exec($cmd . ' 2>&1', $out, $rc);
+		@unlink($tmp);
+		if ($rc != 0) {
+			$failures[] = $name . ': ' . implode(' ', (array)$out);
+		} else {
+			$ok[] = $name;
+		}
+	}
+	if ($failures) {
+		log_error('configbackup: offbox copy FAILED (' . implode('; ', $failures) . ')');
+	}
+	if ($ok) {
+		log_error('configbackup: offbox copy ok (' . implode(', ', $ok) . ')');
 	}
 }
 
@@ -596,7 +625,7 @@ function cb_ingest_acb_locked() {
 						'ts' => $ts,
 						'engine' => 'acb',
 						'data' => $blob,
-					));
+					), $plain);
 				}
 			} else {
 				$msgs[] = 'store insert FAILED, keeping staged files: ' . basename($datafile);
@@ -659,8 +688,8 @@ function cb_backup_native_locked($reason = '', $force = false) {
 			'id' => $id,
 			'ts' => $ts,
 			'engine' => 'native',
-			'data' => cb_encrypt_store($plain),
-		));
+			'data' => $blob,
+		), $plain);
 	}
 	return array((int)$id, '');
 }

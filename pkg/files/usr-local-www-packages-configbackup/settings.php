@@ -66,6 +66,7 @@ if ($_POST['save']) {
 		config_set_path('installedpackages/' . CB_NAME . '/settings/mysql_db', trim($_POST['mysql_db']));
 		config_set_path('installedpackages/' . CB_NAME . '/settings/offbox_target', trim($_POST['offbox_target']));
 		config_set_path('installedpackages/' . CB_NAME . '/settings/offbox_mode', $_POST['offbox_mode']);
+		config_set_path('installedpackages/' . CB_NAME . '/settings/offbox_xml', $_POST['offbox_xml']);
 		/* Secrets: empty input keeps the stored value. */
 		if ($_POST['natpw'] !== '') {
 			config_set_path('installedpackages/' . CB_NAME . '/settings/natpw', $_POST['natpw']);
@@ -165,6 +166,17 @@ $section->addInput(new Form_Select(
 	cb_cfg('offbox_mode', 'scp'),
 	array('scp' => 'scp', 'rsync' => 'rsync')
 ));
+$section->addInput(new Form_Select(
+	'offbox_xml',
+	'Off-box XML copy',
+	cb_cfg('offbox_xml', 'none'),
+	array(
+		'none' => 'None (.cbk blob only)',
+		'enc' => 'Encrypted XML (same package password, tagfile format)',
+		'plain' => 'Plaintext XML (WARNING: readable secrets on the target)',
+		'both' => 'Both encrypted and plaintext XML'
+	)
+))->setHelp('Additionally copy the config.xml alongside the encrypted blob. The encrypted variant can be decrypted on any machine with: openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 500000 -pass pass:PASSWORD -in file.xml.enc (strip the tagfile headers first).');
 $section->addInput(new Form_Input(
 	'offbox_target',
 	'Off-box target',

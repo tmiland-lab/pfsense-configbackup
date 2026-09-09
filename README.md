@@ -25,7 +25,10 @@ instead, and/or runs a fully independent encrypted backup schedule.
 - **Storage backends** — SQLite (recommended, `/var/db/configbackup/
   configbackup.sqlite`), MySQL (via the `mysql` CLI — pfSense PHP has no
   `pdo_mysql`), or SQLite + off-box copy (scp/rsync of every new backup to
-  `user@host:/path`; key-based ssh required).
+  `user@host:/path`; key-based ssh required). Off-box copies can optionally
+  include the `config.xml` itself — encrypted with the package password in
+  the standard tagfile format (decryptable on any machine with `openssl`),
+  plaintext (not recommended — the XML contains secrets), or both.
 - **Full GUI** under *Diagnostics → Config Backup*: list backups
   (date/engine/reason/version/size/sha256), backup-now, restore with safety
   backup, download as decrypted XML or package-encrypted `.cbk`, and a
