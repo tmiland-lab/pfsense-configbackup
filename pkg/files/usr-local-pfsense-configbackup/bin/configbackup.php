@@ -14,6 +14,8 @@
  *   backupforce [reason]   like backup, but always stores (manual path)
  *   restore <id>           restore a stored backup (takes a safety backup first!)
  *   list [n]               list the newest n (default 20) backups
+ *   verify [id]            decrypt-test a backup (default: newest) and
+ *                          check its sha256; notifies on failure
  *   prune                  apply retention now
  *   cron-apply             (re)install cron entries per current settings
  *   cron-remove            remove our cron entries (deinstall path)
@@ -70,6 +72,12 @@ switch ($cmd) {
 		}
 		break;
 
+	case 'verify':
+		list($ok, $msg) = cb_verify(($arg !== '' && ctype_digit($arg)) ? (int)$arg : 0);
+		cb_out($msg);
+		exit($ok ? 0 : 1);
+		break;
+
 	case 'prune':
 		cb_out('Pruned ' . cb_prune() . ' row(s).');
 		break;
@@ -93,6 +101,6 @@ switch ($cmd) {
 		break;
 
 	default:
-		cb_out('Usage: configbackup.php <ingest|backup|backupforce|restore|list|prune|cron-apply|cron-remove|status> [args]');
+		cb_out('Usage: configbackup.php <ingest|backup|backupforce|restore|verify|list|prune|cron-apply|cron-remove|status> [args]');
 		exit(1);
 }

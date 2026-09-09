@@ -41,6 +41,13 @@ instead, and/or runs a fully independent encrypted backup schedule.
   *Diagnostics → Backup & Restore*: `config_install()`, pkg repository
   preservation, package resync on next boot, RRD/SSH extra-data extraction.
   A reboot completes the restore.
+- **Failure notifications** — off-box copy failures, failed restores and
+  broken backups fire a pfSense notification (your configured email
+  channel), throttled to one message per category per hour.
+- **Weekly restore self-test** — every Sunday 04:17 the newest backup is
+  decrypt-tested and its sha256 verified; a broken or undecryptable backup
+  is reported before you ever depend on it. Also available manually:
+  `configbackup.php verify [id]`.
 
 ## Requirements
 

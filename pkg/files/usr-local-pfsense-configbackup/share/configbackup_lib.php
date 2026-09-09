@@ -47,6 +47,8 @@ if (!defined('CB_NAME')) {
 	define('CB_INGESTCMD', '/usr/local/bin/php ' . CB_BIN . ' ingest');
 	/* Independent scheduled backup. */
 	define('CB_BACKUPCMD', '/usr/local/bin/php ' . CB_BIN . ' backup');
+	/* Weekly restore self-test. */
+	define('CB_VERIFYCMD', '/usr/local/bin/php ' . CB_BIN . ' verify');
 	/* Defaults. */
 	define('CB_RETENTION_DEFAULT', 120);
 }
@@ -550,6 +552,7 @@ function cb_offbox_push($row, $plain = null) {
 	}
 	if ($failures) {
 		log_error('configbackup: offbox copy FAILED (' . implode('; ', $failures) . ')');
+		cb_notify('offbox', 'off-box copy FAILED: ' . implode('; ', $failures));
 	}
 	if ($ok) {
 		log_error('configbackup: offbox copy ok (' . implode(', ', $ok) . ')');
@@ -630,6 +633,35 @@ function cb_prune() {
 		$keep = CB_RETENTION_DEFAULT;
 	}
 	return cb_store()->prune($keep);
+}
+
+/* ------------------------------------------------------------------ */
+/* Notifications (failures only, throttled)                            */
+/* ------------------------------------------------------------------ */
+
+/* Send a failure notification through pfSense's configured email channel.
+ * Throttled to one message per category per hour so a broken push target
+ * (e.g. during an outage) cannot flood the inbox. */
+function cb_notify($category, $message) {
+	if (cb_cfg('notify_failures', 'yes') !== 'yes') {
+		return;
+	}
+	$statefile = CB_DB_DIR . '/.notify-state';
+	$state = json_decode((string)@file_get_contents($statefile), true);
+	if (!is_array($state)) {
+		$state = array();
+	}
+	$now = time();
+	if (isset($state[$category]) && ($now - (int)$state[$category]) < 3600) {
+		return;
+	}
+	$state[$category] = $now;
+	@file_put_contents($statefile, json_encode($state), LOCK_EX);
+	if (function_exists('notify_via_smtp')) {
+		notify_via_smtp('Config Backup (' . $category . '): ' . $message, true);
+	} else {
+		log_error('configbackup: notification unavailable: ' . $message);
+	}
 }
 
 /* ------------------------------------------------------------------ */
@@ -803,6 +835,38 @@ function cb_backup_native_locked($reason = '', $force = false) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Restore self-test                                                   */
+/* ------------------------------------------------------------------ */
+
+/* Decrypt a stored backup and compare the sha256 of the plaintext with the
+ * stored hash - proves the row is restorable without touching the system.
+ * $id = 0 checks the newest row. Failures are notified (throttled). */
+function cb_verify($id = 0) {
+	$store = cb_store();
+	if ($id > 0) {
+		$row = $store->get((int)$id);
+	} else {
+		/* Newest row including the blob. */
+		$rows = $store->list_rows(1);
+		$row = empty($rows) ? null : $store->get((int)$rows[0]['id']);
+	}
+	if (!$row) {
+		return array(false, 'no backup row found');
+	}
+	$plain = cb_decrypt_blob($row['data']);
+	if ($plain === null) {
+		cb_notify('verify', "decryption of backup #{$row['id']} FAILED (has the package encryption password changed since it was taken?)");
+		return array(false, "backup #{$row['id']}: decryption FAILED");
+	}
+	$sha = hash('sha256', $plain);
+	if ($sha !== $row['sha256']) {
+		cb_notify('verify', "backup #{$row['id']} FAILED integrity check (sha256 mismatch) - stored data is corrupt");
+		return array(false, "backup #{$row['id']}: sha256 MISMATCH (stored data corrupt)");
+	}
+	return array(true, "backup #{$row['id']} verified: decrypts cleanly, sha256 matches ({$row['size']} bytes, {$row['engine']} engine)");
+}
+
+/* ------------------------------------------------------------------ */
 /* Cron management                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -835,6 +899,12 @@ function cb_cron_apply() {
 		} else {
 			install_cron_job(CB_ACBCMD, false);
 		}
+	}
+	/* Weekly restore self-test: Sundays 04:17. */
+	if (cb_cfg('verify_weekly', 'yes') === 'yes') {
+		install_cron_job(CB_VERIFYCMD, true, '17', '4', '*', '*', '0');
+	} else {
+		install_cron_job(CB_VERIFYCMD, false);
 	}
 }
 
@@ -871,6 +941,7 @@ function cb_cron_assert() {
 function cb_cron_remove() {
 	install_cron_job(CB_BACKUPCMD, false);
 	install_cron_job(CB_INGESTCMD, false);
+	install_cron_job(CB_VERIFYCMD, false);
 	if (config_path_enabled('system/acb/enable')) {
 		install_cron_job(CB_ACBCMD, true, '*');
 	}
@@ -894,10 +965,12 @@ function cb_restore($id) {
 	}
 	$plain = cb_decrypt_blob($row['data']);
 	if ($plain === null) {
+		cb_notify('restore', "decryption of backup #{$id} failed on restore - has the package encryption password changed since this backup was taken?");
 		return array(false, 'Decryption failed - has the package encryption password changed since this backup was taken?');
 	}
 	list($sid, $serr) = cb_backup_native('Pre-restore safety backup (before restore of #' . $id . ')', true);
 	if (!$sid) {
+		cb_notify('restore', 'safety backup failed, restore aborted: ' . $serr);
 		return array(false, 'Safety backup failed, restore aborted: ' . $serr);
 	}
 	if (!stristr($plain, '<' . g_get('xml_rootobj') . '>')) {
@@ -908,6 +981,7 @@ function cb_restore($id) {
 	$rc = function_exists('config_install') ? config_install($tmp) : 1;
 	@unlink($tmp);
 	if ($rc != 0) {
+		cb_notify('restore', "config_install() failed during restore of backup #{$id}");
 		return array(false, 'config_install() failed - configuration not restored');
 	}
 

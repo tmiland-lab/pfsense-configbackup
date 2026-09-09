@@ -74,6 +74,10 @@ if ($_POST['save']) {
 		if ($_POST['mysql_password'] !== '') {
 			config_set_path('installedpackages/' . CB_NAME . '/settings/mysql_password', $_POST['mysql_password']);
 		}
+		config_set_path('installedpackages/' . CB_NAME . '/settings/notify_failures',
+			isset($_POST['notify_failures']) ? 'yes' : '');
+		config_set_path('installedpackages/' . CB_NAME . '/settings/verify_weekly',
+			isset($_POST['verify_weekly']) ? 'yes' : '');
 
 		$savemsg = gettext('Settings saved. Cron entries updated:');
 		write_config('Config Backup settings updated');
@@ -200,6 +204,21 @@ $section->addInput(new Form_Input(
 	'',
 	cb_password_attrs('natpw')
 ))->setHelp('Encrypts every stored backup (including ACB ingest rows, which are re-encrypted after verification). Leave empty to keep the stored password. If this password is lost, stored backups cannot be decrypted.');
+$form->add($section);
+
+$section = new Form_Section('Notifications and self-test');
+$section->addInput(new Form_Checkbox(
+	'notify_failures',
+	'Notify on failures',
+	'Send a pfSense notification (email to the address configured under System > Advanced > Notifications) when off-box copies fail, a restore fails, or the weekly self-test finds a broken backup. Throttled to one message per category per hour.',
+	cb_cfg('notify_failures', 'yes') === 'yes'
+));
+$section->addInput(new Form_Checkbox(
+	'verify_weekly',
+	'Weekly restore self-test',
+	'Every Sunday 04:17, decrypt-test the newest backup and verify its sha256. Catches password drift or corruption before you ever need a restore.',
+	cb_cfg('verify_weekly', 'yes') === 'yes'
+));
 $form->add($section);
 
 /* display_top_tabs() takes its argument by reference - pass a variable. */
