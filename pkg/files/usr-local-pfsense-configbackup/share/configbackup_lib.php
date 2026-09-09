@@ -465,12 +465,14 @@ function cb_offbox_push($row) {
 		log_error('configbackup: cannot write offbox staging file ' . $tmp);
 		return;
 	}
+	@chmod($tmp, 0600);
 	if ($mode === 'rsync' && is_executable('/usr/local/bin/rsync')) {
 		$cmd = '/usr/local/bin/rsync -a --chmod=F600 ' . escapeshellarg($tmp) . ' ' .
 			escapeshellarg(rtrim($target, '/') . '/');
 	} else {
-		/* BatchMode: fail instead of hanging on a missing ssh key. */
-		$cmd = '/usr/bin/scp -q -o BatchMode=yes ' . escapeshellarg($tmp) . ' ' .
+		/* BatchMode: fail instead of hanging on a missing ssh key.
+		 * -p keeps the staged 0600 mode on the remote copy. */
+		$cmd = '/usr/bin/scp -p -q -o BatchMode=yes ' . escapeshellarg($tmp) . ' ' .
 			escapeshellarg(rtrim($target, '/') . '/' . $name);
 	}
 	exec($cmd . ' 2>&1', $out, $rc);
