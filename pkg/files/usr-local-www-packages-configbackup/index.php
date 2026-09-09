@@ -20,6 +20,9 @@ function cb_download_name($row, $ext) {
 	return "config-{$host}-" . date('YmdHis', (int)$row['ts']) . '-' . $row['engine'] . '-' . (int)$row['id'] . $ext;
 }
 
+/* head.inc renders the theme (CSS), page chrome and opens the body. */
+include('head.inc');
+
 $input_errors = array();
 $savemsg = '';
 
@@ -110,7 +113,7 @@ $section->addInput(new Form_Button(
 	'backupnow',
 	gettext('Backup now'),
 	null,
-	'fa-archive'
+	'fa-solid fa-box-archive'
 ))->setHelp(gettext('Takes a backup of the current configuration into the package database right away.'));
 $form->add($section);
 print $form;

@@ -21,6 +21,9 @@ require_once('/usr/local/pfsense-configbackup/share/configbackup_lib.php');
 $pgtitle = array(gettext('Diagnostics'), gettext('Config Backup'), gettext('Settings'));
 $pglinks = array('', '@self', '@self');
 
+/* head.inc renders the theme (CSS), page chrome and opens the body. */
+include('head.inc');
+
 $input_errors = array();
 $savemsg = '';
 
