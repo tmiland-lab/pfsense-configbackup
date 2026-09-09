@@ -2,7 +2,7 @@
 <!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
 <packagegui>
 	<name>configbackup</name>
-	<version>0.1.0</version>
+	<version>0.1.1</version>
 	<title>Config Backup</title>
 	<menu>
 		<name>Config Backup</name>

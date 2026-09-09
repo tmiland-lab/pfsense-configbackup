@@ -61,10 +61,12 @@ if ($_POST) {
 	}
 }
 
-display_top_tabs($tab_array = array(
+/* display_top_tabs() takes its argument by reference - pass a variable. */
+$tab_array = array(
 	array(gettext('Config Backup'), true, '/packages/configbackup/index.php'),
 	array(gettext('Settings'), false, '/packages/configbackup/settings.php'),
-));
+);
+display_top_tabs($tab_array);
 
 if ($input_errors) {
 	print_input_errors($input_errors);
@@ -116,9 +118,7 @@ print $form;
 $rows = cb_store()->list_rows(200);
 $total = cb_store()->count();
 ?>
-<form method="post">
-	<input type="hidden" name="action" value="noop" />
-	<div class="panel panel-default">
+<div class="panel panel-default">
 		<div class="panel-heading"><h2 class="panel-title"><?= gettext('Stored backups') ?></h2></div>
 		<div class="panel-body"><?= sprintf(gettext('Showing the %1$s newest of %2$s stored backups.'), count($rows), $total) ?></div>
 		<div class="table-responsive">
@@ -172,7 +172,7 @@ $total = cb_store()->count();
 			</table>
 		</div>
 	</div>
-</form>
+</div>
 
 <script type="text/javascript">
 //<![CDATA[

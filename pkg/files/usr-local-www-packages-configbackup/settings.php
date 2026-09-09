@@ -187,10 +187,12 @@ $section->addInput(new Form_Input(
 ))->setHelp('Encrypts every stored backup (including ACB ingest rows, which are re-encrypted after verification). Leave empty to keep the stored password. If this password is lost, stored backups cannot be decrypted.');
 $form->add($section);
 
-display_top_tabs($tab_array = array(
+/* display_top_tabs() takes its argument by reference - pass a variable. */
+$tab_array = array(
 	array(gettext('Config Backup'), false, '/packages/configbackup/index.php'),
 	array(gettext('Settings'), true, '/packages/configbackup/settings.php'),
-));
+);
+display_top_tabs($tab_array);
 
 if ($input_errors) {
 	print_input_errors($input_errors);
