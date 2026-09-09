@@ -12,6 +12,8 @@ hijacks that pipeline (a supported cron-entry replacement, no pfSense source
 files are modified) so staged backups are ingested into the package database
 instead, and/or runs a fully independent encrypted backup schedule.
 
+![Config Backup — stored backups list](docs/screenshots/backups-list.png)
+
 ## Features
 
 - **ACB hijack ingest engine** — removes the built-in `acbupload.php` cron
